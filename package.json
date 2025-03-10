@@ -1,15 +1,22 @@
 {
   "name": "violation-service",
   "version": "1.0.0",
-  "description": "Service to query traffic violations",
+  "description": "خدمة الاستعلام عن المخالفات المرورية",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "keywords": [
+    "violations",
+    "kuwait",
+    "traffic"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "express": "^4.17.1",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "puppeteer": "^13.0.1",
-    "body-parser": "^1.19.0"
+    "puppeteer": "^22.0.0",
+    "body-parser": "^1.20.2"
   }
 }
