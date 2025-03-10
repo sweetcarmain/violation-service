@@ -1,4 +1,4 @@
-// تعديل التكوين للعمل مع Render - الاستعلام برقم الهوية فقط
+cat > server.js << 'EOL'
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
@@ -7,21 +7,16 @@ const bodyParser = require('body-parser');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// إعدادات CORS (هام: أضف عنوان موقعك على GoDaddy)
-app.use(cors({
-    origin: '*', // يسمح بالوصول من أي مصدر، يمكنك تغييره لاحقًا ليكون أكثر أمانًا
-    methods: ['GET', 'POST'],
-    credentials: true
-}));
-
+// إعدادات CORS
+app.use(cors());
 app.use(bodyParser.json());
 
-// طريقة للتأكد من أن الخدمة تعمل
+// مسار الصفحة الرئيسية
 app.get('/', (req, res) => {
     res.json({ status: 'Service is running' });
 });
 
-// طريقة اختبار بدون استخدام Puppeteer
+// مسار الاختبار
 app.get('/test', (req, res) => {
     res.json({
         success: true,
@@ -30,43 +25,43 @@ app.get('/test', (req, res) => {
     });
 });
 
-// طريقة الاستعلام عن المخالفات
+// مسار الاستعلام عن المخالفات
 app.post('/api/violations', async (req, res) => {
+    console.log('Received request:', req.body);
+    
     try {
-        console.log('Received request:', req.body);
         const { civilId } = req.body;
-
-        // التحقق من المدخلات
+        
         if (!civilId) {
             return res.status(400).json({
                 success: false,
                 message: 'يرجى تقديم الرقم المدني'
             });
         }
-
-        console.log(`Processing request for civil ID: ${civilId}`);
-
-        // الحصول على معلومات المخالفات من موقع وزارة الداخلية
+        
+        console.log('Processing civil ID:', civilId);
+        
+        // الحصول على المخالفات من موقع وزارة الداخلية
         const violations = await getViolationsFromMOI(civilId);
-
-        console.log(`Found ${violations.length} violations`);
-
+        
+        console.log('Retrieved violations:', violations.length);
+        
         return res.json({
             success: true,
             message: 'تم الاستعلام بنجاح',
             violations: violations
         });
-
+        
     } catch (error) {
-        console.error('Error fetching violations:', error);
+        console.error('Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'حدث خطأ أثناء الاستعلام. يرجى المحاولة مرة أخرى.'
+            message: 'حدث خطأ أثناء الاستعلام'
         });
     }
 });
 
-// دالة تستخدم Puppeteer للتفاعل مع موقع وزارة الداخلية
+// دالة للحصول على المخالفات من موقع وزارة الداخلية
 async function getViolationsFromMOI(civilId) {
     console.log('Launching browser...');
     const browser = await puppeteer.launch({
@@ -75,135 +70,74 @@ async function getViolationsFromMOI(civilId) {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-features=IsolateOrigins',
-            '--disable-site-isolation-trials'
+            '--disable-gpu'
         ]
     });
-
+    
     try {
         console.log('Browser launched successfully');
         const page = await browser.newPage();
         
-        // تعيين User-Agent لتجنب الكشف
+        // تعيين User-Agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36');
         
         // تعيين viewport
         await page.setViewport({ width: 1366, height: 768 });
-
+        
         console.log('Navigating to MOI website...');
         // الانتقال إلى صفحة الاستعلام عن المخالفات
         await page.goto('https://www.moi.gov.kw/main/eservices/gdt/violation-enquiry', {
             waitUntil: 'networkidle2',
             timeout: 60000
         });
-
+        
         console.log('Page loaded successfully');
-
-        // إضافة تأخير قصير للتأكد من تحميل الصفحة بالكامل
+        
+        // إضافة تأخير قصير
         await page.waitForTimeout(2000);
-
+        
         // التقاط لقطة شاشة للتأكد من التحميل الصحيح
         await page.screenshot({ path: '/tmp/initial-page.png' });
         console.log('Initial screenshot taken');
-
-        // البحث عن عناصر النموذج - تحتاج إلى تكييف هذه المحددات بناءً على هيكل الصفحة الفعلي
-        const formElements = await page.evaluate(() => {
-            // تحديد جميع حقول الإدخال في الصفحة
-            const inputs = Array.from(document.querySelectorAll('input'));
-            const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-            
-            // تسجيل المعلومات عن كل حقل
-            return {
-                inputs: inputs.map(input => ({
-                    id: input.id,
-                    name: input.name,
-                    type: input.type,
-                    placeholder: input.placeholder
-                })),
-                buttons: buttons.map(button => ({
-                    id: button.id,
-                    text: button.innerText || button.value,
-                    type: button.type
-                }))
-            };
-        });
         
-        console.log('Form elements found:', JSON.stringify(formElements));
-
-        // البحث عن حقل الرقم المدني (قد يحتوي على كلمة "civil" أو "مدني" في المعرف أو النص التوضيحي)
-        let civilIdField = formElements.inputs.find(input => 
-            (input.id && input.id.toLowerCase().includes('civil')) || 
-            (input.name && input.name.toLowerCase().includes('civil')) ||
-            (input.id && input.id.toLowerCase().includes('id')) || 
-            (input.name && input.name.toLowerCase().includes('id')) ||
-            (input.placeholder && input.placeholder.includes('مدني'))
-        );
+        // إدخال الرقم المدني في الحقل المحدد
+        console.log('Entering civil ID...');
+        await page.type('#civilId', civilId);
         
-        // البحث عن زر الإرسال
-        let submitButton = formElements.buttons.find(button => 
-            (button.text && (button.text.includes('بحث') || button.text.includes('استعلام'))) ||
-            (button.id && (button.id.toLowerCase().includes('search') || button.id.toLowerCase().includes('submit')))
-        );
-
-        console.log('Selected civil ID field:', civilIdField);
-        console.log('Selected submit button:', submitButton);
-
-        // محاولة ملء النموذج باستخدام أسماء الحقول أو المعرفات المكتشفة
-        if (civilIdField) {
-            if (civilIdField.id) {
-                await page.type(`#${civilIdField.id}`, civilId);
-            } else if (civilIdField.name) {
-                await page.type(`[name="${civilIdField.name}"]`, civilId);
-            }
-        } else {
-            // إذا لم يتم العثور على الحقل المحدد، حاول استخدام محددات عامة
-            console.log('Civil ID field not found, trying generic selectors');
-            await page.type('input[type="text"]', civilId);
-        }
-
-        console.log('Form filled with civil ID');
-
-        // التقاط لقطة شاشة بعد ملء النموذج
+        // التقاط لقطة شاشة بعد إدخال الرقم المدني
         await page.screenshot({ path: '/tmp/filled-form.png' });
-        console.log('Form screenshot taken');
-
-        // نقر على زر الإرسال
-        if (submitButton && submitButton.id) {
-            await Promise.all([
-                page.click(`#${submitButton.id}`),
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(e => console.log('Navigation timeout or no navigation occurred:', e.message)),
-            ]);
-        } else {
-            console.log('Submit button not found by ID, trying generic selectors');
-            // محاولة النقر على أول زر في النموذج
-            await Promise.all([
-                page.click('button[type="submit"], input[type="submit"]'),
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(e => console.log('Navigation timeout or no navigation occurred:', e.message)),
-            ]);
-        }
-
-        console.log('Form submitted');
-
-        // إضافة تأخير قصير للتأكد من تحميل النتائج
-        await page.waitForTimeout(3000);
-
+        console.log('Form filled with civil ID');
+        
+        // النقر على زر الاستعلام
+        console.log('Clicking the enquiry button...');
+        await Promise.all([
+            page.click('#btnEnquire'),
+            // انتظار التنقل أو انتهاء النشاط على الشبكة
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(e => {
+                console.log('Navigation may not have occurred:', e.message);
+            })
+        ]);
+        
+        console.log('Enquiry submitted');
+        
+        // إضافة تأخير للتأكد من تحميل النتائج
+        await page.waitForTimeout(5000);
+        
         // التقاط لقطة شاشة للنتائج
         await page.screenshot({ path: '/tmp/results-page.png' });
         console.log('Results screenshot taken');
-
+        
         // استخراج بيانات المخالفات من الصفحة
         const violations = await page.evaluate(() => {
             console.log('Extracting violation data...');
             const results = [];
             
-            // محاولة العثور على جداول في الصفحة
+            // البحث عن الجداول في الصفحة
             const tables = document.querySelectorAll('table');
             console.log(`Found ${tables.length} tables`);
             
             if (tables && tables.length > 0) {
                 tables.forEach((table, tableIndex) => {
-                    // تخطي جداول العنوان أو الجداول الأخرى غير ذات الصلة
                     const rows = table.querySelectorAll('tr');
                     console.log(`Table ${tableIndex} has ${rows.length} rows`);
                     
@@ -213,139 +147,74 @@ async function getViolationsFromMOI(civilId) {
                         if (cells.length >= 4) {
                             const violation = {};
                             
-                            // تحديد البيانات بناءً على ترتيب الأعمدة في الجدول
-                            // قد تحتاج إلى تعديل هذا بناءً على هيكل الجدول الفعلي
-                            for (let j = 0; j < cells.length; j++) {
-                                const cellText = cells[j].textContent.trim();
-                                
-                                // محاولة تحديد نوع البيانات بناءً على المحتوى
-                                if (/^\d+\/\d+\/\d+$/.test(cellText)) {
-                                    violation.date = cellText;
-                                } else if (/^\d+:\d+$/.test(cellText)) {
-                                    violation.time = cellText;
-                                } else if (/^\d+(\.\d+)?$/.test(cellText)) {
-                                    // إذا كان النص يحتوي على أرقام فقط مع إمكانية وجود نقطة عشرية، فقد يكون المبلغ
-                                    violation.amount = cellText;
-                                } else if (cellText.length > 10 && !violation.type) {
-                                    // إذا كان النص طويلاً، فقد يكون وصف المخالفة
-                                    violation.type = cellText;
-                                } else if (!violation.id && /^\d+$/.test(cellText)) {
-                                    // إذا كان النص يحتوي على أرقام فقط، فقد يكون رقم المخالفة
-                                    violation.id = cellText;
-                                } else if (!violation.location) {
-                                    // خلاف ذلك، قد يكون الموقع
-                                    violation.location = cellText;
-                                }
-                            }
+                            // استخراج البيانات حسب ترتيب الأعمدة
+                            // يمكن تعديل هذه المنطقة حسب ترتيب البيانات في جدول النتائج
+                            if (cells[0]) violation.id = cells[0].textContent.trim();
+                            if (cells[1]) violation.date = cells[1].textContent.trim();
+                            if (cells[2]) violation.type = cells[2].textContent.trim();
+                            if (cells[3]) violation.amount = cells[3].textContent.trim();
+                            if (cells[4]) violation.location = cells[4].textContent.trim();
                             
-                            // إضافة المخالفة إلى النتائج إذا كانت تحتوي على معلومات كافية
-                            if (violation.id || violation.date || violation.type) {
-                                results.push(violation);
-                            }
+                            // إضافة المخالفة إلى النتائج
+                            results.push(violation);
                         }
                     }
                 });
             } else {
-                console.log('No tables found, searching for violation data in other elements');
+                console.log('No tables found, looking for violation data in other elements');
                 
-                // البحث عن عناصر div قد تحتوي على معلومات المخالفات
-                const violationDivs = document.querySelectorAll('.violation, .result-item, .record');
+                // البحث عن معلومات المخالفات في عناصر أخرى
+                const violationElements = document.querySelectorAll('.violation-item, .record, .result-row');
                 
-                if (violationDivs && violationDivs.length > 0) {
-                    violationDivs.forEach(div => {
-                        const violation = {};
-                        
-                        // محاولة استخراج البيانات من النص
-                        const text = div.textContent.trim();
-                        
-                        // استخراج التاريخ (بتنسيق مثل 12/34/5678)
-                        const dateMatch = text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
-                        if (dateMatch) {
-                            violation.date = dateMatch[0];
-                        }
-                        
-                        // استخراج الوقت (بتنسيق مثل 12:34)
-                        const timeMatch = text.match(/\d{1,2}:\d{2}/);
-                        if (timeMatch) {
-                            violation.time = timeMatch[0];
-                        }
-                        
-                        // استخراج المبلغ (رقم متبوع بـ "د.ك" أو "KD")
-                        const amountMatch = text.match(/(\d+(\.\d+)?)(\s*)(د\.ك|KD)/i);
-                        if (amountMatch) {
-                            violation.amount = amountMatch[1];
-                        }
-                        
-                        // إضافة المخالفة إلى النتائج إذا تم العثور على أي معلومات
-                        if (Object.keys(violation).length > 0) {
-                            results.push(violation);
-                        }
+                if (violationElements && violationElements.length > 0) {
+                    violationElements.forEach(element => {
+                        // استخراج البيانات من عناصر النتائج
+                        const text = element.textContent.trim();
+                        const violation = {
+                            text: text
+                        };
+                        results.push(violation);
                     });
                 }
             }
             
-            // إذا لم نجد أي مخالفات بالطرق السابقة، نبحث عن أي نص قد يشير إلى نتائج
+            // إذا لم نجد أي بيانات، نتحقق من وجود رسالة "لا توجد مخالفات"
             if (results.length === 0) {
-                // التحقق مما إذا كانت هناك رسالة "لا توجد مخالفات"
-                const noViolationsText = document.body.textContent;
-                if (noViolationsText.includes('لا توجد مخالفات') || 
-                    noViolationsText.includes('لم يتم العثور على مخالفات') ||
-                    noViolationsText.toLowerCase().includes('no violations') ||
-                    noViolationsText.toLowerCase().includes('no records found')) {
-                    console.log('Found "no violations" message');
-                    // لا نضيف شيئًا لأنه لا توجد مخالفات
-                } else {
-                    console.log('No structured violation data found');
+                const pageText = document.body.textContent;
+                if (pageText.includes('لا توجد مخالفات') || 
+                    pageText.includes('لم يتم العثور على مخالفات') ||
+                    pageText.toLowerCase().includes('no violations')) {
+                    console.log('No violations found message detected');
                 }
             }
             
             return results;
         });
-
+        
         console.log(`Found ${violations.length} violations after extraction`);
         
-        // إذا لم نتمكن من استخراج أي مخالفات، وقد يكون ذلك بسبب تغير الموقع،
-        // نرجع مخالفات وهمية للاختبار فقط (يمكن إزالة هذا في الإنتاج)
+        // إذا لم نجد أي مخالفات، نرجع مصفوفة فارغة
         if (violations.length === 0) {
-            console.log('Returning fake violations for testing');
-            return getFakeViolations();
+            console.log('No violations found, returning empty array');
+            return [];
         }
         
         return violations;
     } catch (error) {
         console.error('Error during scraping:', error);
-        // في حالة حدوث خطأ، نرجع مخالفات وهمية للاختبار فقط (يمكن إزالة هذا في الإنتاج)
-        console.log('Returning fake violations due to error');
-        return getFakeViolations();
+        throw error;
     } finally {
         await browser.close();
         console.log('Browser closed');
     }
 }
 
-// للاختبار فقط: إرجاع مخالفات وهمية
-function getFakeViolations() {
-    return [
-        {
-            id: '10' + Math.floor(Math.random() * 10000),
-            date: '15/02/2025',
-            time: '14:30',
-            type: 'تجاوز السرعة المقررة',
-            amount: '20',
-            location: 'طريق الدائري السادس'
-        },
-        {
-            id: '10' + Math.floor(Math.random() * 10000),
-            date: '10/01/2025',
-            time: '09:15',
-            type: 'وقوف في مكان ممنوع',
-            amount: '10',
-            location: 'شارع سالم المبارك - السالمية'
-        }
-    ];
-}
-
-// بدء تشغيل الخادم
+// تشغيل الخادم
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
+EOL
+
+npm install puppeteer express cors body-parser
+
+node server.js
